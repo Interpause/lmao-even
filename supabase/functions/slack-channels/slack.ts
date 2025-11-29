@@ -15,3 +15,17 @@ export async function getConversations(token: string) {
 
   return result.channels || [];
 }
+
+/**
+ * Fetches messages from a specific conversation
+ */
+export async function getMessages(token: string, channelId: string, limit = 100) {
+  const client = new WebClient(token);
+
+  const result = await client.conversations.history({
+    channel: channelId,
+    limit,
+  });
+
+  return result.messages || [];
+}
