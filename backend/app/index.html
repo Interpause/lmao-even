@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message Classifier</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { margin-bottom: 20px; color: #333; }
+
+        .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+        .tab { padding: 10px 16px; border: none; background: #fff; border-radius: 8px; cursor: pointer; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .tab:hover { background: #e8e8e8; }
+        .tab.active { background: #007bff; color: white; }
+        .tab.actionable { border-left: 3px solid #28a745; }
+        .tab .count { background: rgba(0,0,0,0.1); padding: 2px 8px; border-radius: 10px; margin-left: 6px; font-size: 12px; }
+
+        .messages { display: flex; flex-direction: column; gap: 12px; }
+        .message { background: white; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .message-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .sender { font-weight: 600; color: #333; }
+        .source { font-size: 12px; color: #888; }
+        .subject { font-weight: 500; color: #555; margin-bottom: 4px; }
+        .snippet { color: #666; font-size: 14px; line-height: 1.5; }
+        .confidence { font-size: 12px; color: #888; margin-top: 8px; }
+
+        .btn-response { margin-top: 12px; padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+        .btn-response:hover { background: #218838; }
+
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
+        .modal.show { display: flex; }
+        .modal-content { background: white; padding: 24px; border-radius: 12px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .modal-header h2 { font-size: 18px; }
+        .modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: #888; }
+        .modal-body { line-height: 1.6; white-space: pre-wrap; background: #f9f9f9; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
+
+        .modal-actions { display: flex; gap: 12px; justify-content: flex-end; }
+        .btn { padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; }
+        .btn-send { background: #007bff; color: white; }
+        .btn-send:hover { background: #0056b3; }
+        .btn-edit { background: #6c757d; color: white; }
+        .btn-edit:hover { background: #545b62; }
+
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .error { background: #fee; color: #c00; padding: 16px; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Message Classifier</h1>
+        <div class="tabs" id="tabs"></div>
+        <div class="messages" id="messages">
+            <div class="loading">Loading messages...</div>
+        </div>
+    </div>
+
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Draft Response</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+            <div class="modal-actions">
+                <button class="btn btn-edit" onclick="editResponse()">Edit</button>
+                <button class="btn btn-send" onclick="sendResponse()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:8000';
+        let allMessages = {};
+        let actionableTags = [];
+        let currentTag = null;
+        let currentMessageId = null;
+
+        async function init() {
+            try {
+                const tagsRes = await fetch(`${API}/tags`);
+                const tagsData = await tagsRes.json();
+                actionableTags = tagsData.actionable;
+
+                const messagesRes = await fetch(`${API}/messages`);
+                allMessages = await messagesRes.json();
+
+                renderTabs(tagsData.tags);
+                if (tagsData.tags.length > 0) {
+                    selectTab(tagsData.tags[0]);
+                }
+            } catch (err) {
+                document.getElementById('messages').innerHTML = `<div class="error">Failed to connect to API. Make sure the server is running on ${API}</div>`;
+            }
+        }
+
+        function renderTabs(tags) {
+            const tabsEl = document.getElementById('tabs');
+            tabsEl.innerHTML = tags.map(tag => {
+                const count = allMessages[tag]?.length || 0;
+                const isActionable = actionableTags.includes(tag);
+                return `<button class="tab ${isActionable ? 'actionable' : ''}" data-tag="${tag}" onclick="selectTab('${tag}')">
+                    ${tag.replace(/_/g, ' ')}<span class="count">${count}</span>
+                </button>`;
+            }).join('');
+        }
+
+        function selectTab(tag) {
+            currentTag = tag;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.tab[data-tag="${tag}"]`)?.classList.add('active');
+            renderMessages(tag);
+        }
+
+        function renderMessages(tag) {
+            const messages = allMessages[tag] || [];
+            const container = document.getElementById('messages');
+            const isActionable = actionableTags.includes(tag);
+
+            if (messages.length === 0) {
+                container.innerHTML = '<div class="loading">No messages in this category</div>';
+                return;
+            }
+
+            container.innerHTML = messages.map(msg => `
+                <div class="message">
+                    <div class="message-header">
+                        <span class="sender">${msg.sender_name} &lt;${msg.sender_handle_or_email}&gt;</span>
+                        <span class="source">${msg.source_system} / ${msg.channel_name}</span>
+                    </div>
+                    <div class="subject">${msg.subject_or_topic}</div>
+                    <div class="snippet">${msg.message_snippet}</div>
+                    <div class="confidence">Confidence: ${(msg.classification_confidence * 100).toFixed(1)}%</div>
+                    ${isActionable ? `<button class="btn-response" onclick="showResponse('${msg.message_id}')">View Draft Response</button>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function findMessage(messageId) {
+            for (const tag of Object.keys(allMessages)) {
+                const msg = allMessages[tag].find(m => m.message_id === messageId);
+                if (msg) return msg;
+            }
+            return null;
+        }
+
+        function showResponse(messageId) {
+            const msg = findMessage(messageId);
+            if (!msg) return;
+
+            currentMessageId = messageId;
+            document.getElementById('modal-body').textContent = msg.draft_response || 'No response generated.';
+            document.getElementById('modal').classList.add('show');
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.remove('show');
+            currentMessageId = null;
+        }
+
+        function sendResponse() {
+            // TODO: Implement send functionality
+            alert('Send functionality not implemented yet');
+            closeModal();
+        }
+
+        function editResponse() {
+            // TODO: Implement edit functionality (will use /generate-response endpoint)
+            alert('Edit functionality not implemented yet');
+        }
+
+        document.getElementById('modal').addEventListener('click', (e) => {
+            if (e.target.id === 'modal') closeModal();
+        });
+
+        init();
+    </script>
+</body>
+</html>

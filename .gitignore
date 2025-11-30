@@ -21,3 +21,10 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# backend
+backend/.venv
+backend/models/__pycache__
+backend/app/__pycache__
+backend/models/message_classifier_model
+backend/checkpoints/checkpoint-168
